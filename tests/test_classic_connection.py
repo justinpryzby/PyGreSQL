@@ -1735,7 +1735,7 @@ class TestInserttable(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(self.cls_set_up)
-        self.c = connect()
+        self.c = pg.DB(dbname, dbhost, dbport)
         self.c.query("set client_encoding=utf8")
         self.c.query("set datestyle='ISO,YMD'")
         self.c.query("set lc_monetary='C'")
@@ -1766,6 +1766,8 @@ class TestInserttable(unittest.TestCase):
     def get_back(self, encoding='utf-8'):
         """Convert boolean and decimal values back."""
         data = []
+        pg.set_typecast('date', None)
+        pg.set_typecast('time', None)
         for row in self.c.query("select * from test order by 1").getresult():
             self.assertIsInstance(row, tuple)
             row = list(row)
@@ -2145,7 +2147,7 @@ class TestDirectSocketAccess(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        c = connect()
+        c = pg.DB(dbname, dbhost, dbport)
         c.query("drop table if exists test cascade")
         c.query("create table test (i int, v varchar(16))")
         c.close()
@@ -2159,7 +2161,8 @@ class TestDirectSocketAccess(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(self.cls_set_up)
-        self.c = connect()
+        #self.c = connect()
+        self.c = pg.DB(dbname, dbhost, dbport)
         self.c.query("set client_encoding=utf8")
 
     def tearDown(self):

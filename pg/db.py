@@ -249,6 +249,49 @@ class DB:
         """Encode a JSON string for use within SQL."""
         return jsonencode(d)
 
+    def inserttable(self, table, rows, columns=None):
+        # PQescapeIdentifier
+        if not isinstance(rows, (list,tuple)):
+            raise TypeError('expects a list or a tuple as second argument')
+
+        sql = 'copy %s' % self.escape_identifier(table)
+        if columns == []:
+            return
+        if columns is not None:
+            sql += '( %s )' % ', '.join([self.escape_identifier(i) for i in columns])
+        sql += ' from stdin'
+        self.query(sql)
+        try:
+            self._inserttable_guts(rows)
+        except Exception as e:
+            raise
+        finally:
+            self.endcopy()
+
+    def _inserttable_guts(self, rows):
+        import re
+        bytesreg = re.compile(b'([\\\t\n])')
+        strreg = re.compile('([\\\t\n])')
+        for row in rows:
+            if not isinstance(row, (list,tuple)):
+                raise TypeError('second argument must contain a tuple or a list')
+
+            toput = []
+            for col in row:
+                if col is None:
+                    toput.append('\\N')
+                elif isinstance(col, bytes):
+                    toput.append(re.sub(bytesreg, br'\\\g<1>', col).decode())
+                elif isinstance(col, (str,unicode)):
+                    toput.append(re.sub(strreg, r'\\\g<1>', col))
+                #elif isinstance(col, (int,long)):
+                    #toput.append(str(col))
+                else:
+                    toput.append(str(col))
+                #pg_str = getattr(value, '__pg_str__', None)
+            toput = '\t'.join(toput) + '\n'
+            self.putline(toput)
+
     def close(self) -> None:
         """Close the database connection."""
         # Wraps shared library function so we can track state.
