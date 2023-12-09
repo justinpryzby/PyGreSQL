@@ -1766,8 +1766,11 @@ class TestInserttable(unittest.TestCase):
     def get_back(self, encoding='utf-8'):
         """Convert boolean and decimal values back."""
         data = []
+        old_timecast = pg.get_typecast('time')
+        old_datecast = pg.get_typecast('date')
         pg.set_typecast('date', None)
         pg.set_typecast('time', None)
+
         for row in self.c.query("select * from test order by 1").getresult():
             self.assertIsInstance(row, tuple)
             row = list(row)
@@ -1810,6 +1813,9 @@ class TestInserttable(unittest.TestCase):
                 self.assertIsInstance(row[13], str)
             row = tuple(row)
             data.append(row)
+
+        pg.set_typecast('date', old_datecast)
+        pg.set_typecast('time', old_timecast)
         return data
 
     def test_inserttable1_row(self):

@@ -3862,6 +3862,13 @@ class TestDBClass(unittest.TestCase):
 
     def test_date(self):
         query = self.db.query
+        #global old_timecast, old_timecast
+        #old_timecast = pg.get_typecast('time')
+        #old_datecast = pg.get_typecast('date')
+
+        #pg.set_typecast('date', pg.Typecasts()['date'])
+        #pg.set_typecast('time', pg.Typecasts()['time'])
+
         for datestyle in (
                 'ISO', 'Postgres, MDY', 'Postgres, DMY',
                 'SQL, MDY', 'SQL, DMY', 'German'):
@@ -3884,7 +3891,10 @@ class TestDBClass(unittest.TestCase):
         self.assertEqual(r[0], date.max)
         self.assertEqual(r[1], date.min)
 
-    def test_time(self):
+    def testTime(self):
+        #global old_timecast, old_timecast
+        #pg.set_typecast('date', old_datecast)
+        #pg.set_typecast('time', old_timecast)
         query = self.db.query
         d = time(15, 9, 26)
         q = "select $1::time"
