@@ -110,6 +110,7 @@ def pg_version():
 
 pg_version = pg_version()
 libraries = ['pq']
+#, 'pgcommon']
 # Make sure that the Python header files are searched before
 # those of PostgreSQL, because PostgreSQL can have its own Python.h
 include_dirs = [sysconfig.get_path("include"), pg_config('includedir')]
