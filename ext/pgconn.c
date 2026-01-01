@@ -704,6 +704,54 @@ conn_is_non_blocking(connObject *self, PyObject *noargs)
     return PyBool_FromLong((long)rc);
 }
 
+// A buffer with routines to handle resizing.
+// This is inspired by libpq's PQExpBufferData (which is not available to frontend tools?)
+// It also doesn't handle binary data.
+struct ExpBuffer {
+    void *data;
+    size_t len;
+    size_t max_len;
+};
+
+// Unlike libpq, this doesn't take a format string.
+static int
+appendExpBuffer(struct ExpBuffer *buf, const char *str)
+{
+    size_t len = strlen(str);
+    size_t need = buf->len + len + 2;
+    void *tmp;
+
+    if (need >= buf->max_len) {
+        // Allocate powers of two unless it's large
+        if (2 * buf->max_len >= need && buf->max_len < 1024 * 1024)
+            need = 2 * buf->max_len;
+
+        tmp = realloc(buf->data, need);
+        if (!tmp) {
+            /* memory error */
+            // return PyErr_NoMemory();
+            return 1;
+        }
+
+        buf->data = tmp;
+        buf->max_len = need;
+    }
+
+    tmp = stpcpy(buf->data + buf->len, str);
+    assert(tmp <= buf->data + buf->max_len);
+    buf->len += len;
+    return 0; // XXX
+}
+
+// XXX
+static int
+appendExpBufferChar(struct ExpBuffer *buf, char c)
+{
+    char tmp[] = {c, 0};
+
+    return appendExpBuffer(buf, tmp);
+}
+
 /* Insert table */
 static char conn_inserttable__doc__[] =
     "inserttable(table, data, [columns]) -- insert iterable into table\n\n"
@@ -717,7 +765,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
 {
     PGresult *result;
     char *table, *s, *t;
-    PQExpBufferData *buffer;
+    struct ExpBuffer buffer = {0};
     int freeze = 0, encoding, ret;
     PyObject *rows, *iter_row, *item, *columns = NULL;
     Py_ssize_t i, j, m, n;
@@ -775,16 +823,10 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
         n = -1; /* number of columns not yet known */
     }
 
-    /* allocate buffer */
-    if (!(buffer = createPQExpBuffer())) {
-        Py_DECREF(iter_row);
-        return PyErr_NoMemory();
-    }
-
     encoding = PQclientEncoding(self->cnx);
 
     /* starts query */
-    appendPQExpBuffer(buffer, "copy ");
+    appendExpBuffer(&buffer, "copy ");
 
     s = table;
     do {
@@ -792,16 +834,16 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
         if (!t)
             t = s + strlen(s);
         table = PQescapeIdentifier(self->cnx, s, (size_t)(t - s));
-        appendPQExpBuffer(buffer, "%s", table);
+        appendExpBuffer(&buffer, table);
         PQfreemem(table);
         s = t;
         if (*s)
-            appendPQExpBufferChar(buffer, *s++);
+            appendExpBufferChar(&buffer, *s++);
     } while (*s);
 
     if (columns) {
         /* adds a string like f" ({','.join(columns)})" */
-        appendPQExpBuffer(buffer, " (");
+        appendExpBuffer(&buffer, " (");
         for (j = 0; j < n; ++j) {
             PyObject *obj = PySequence_Fast_GET_ITEM(columns, j);
             Py_ssize_t slen;
@@ -813,7 +855,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
             else if (PyUnicode_Check(obj)) {
                 obj = get_encoded_string(obj, encoding);
                 if (!obj) {
-                    destroyPQExpBuffer(buffer);
+                    free(buffer.data);
                     Py_DECREF(iter_row);
                     return NULL; /* pass the UnicodeEncodeError */
                 }
@@ -822,28 +864,28 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
                 PyErr_SetString(
                     PyExc_TypeError,
                     "The third argument must contain only strings");
-                destroyPQExpBuffer(buffer);
+                free(buffer.data);
                 Py_DECREF(iter_row);
                 return NULL;
             }
             PyBytes_AsStringAndSize(obj, &col, &slen);
             col = PQescapeIdentifier(self->cnx, col, (size_t)slen);
             Py_DECREF(obj);
-            appendPQExpBuffer(buffer, "%s", col);
-            appendPQExpBufferChar(buffer, j == n - 1 ? ')' : ',');
+            appendExpBuffer(&buffer, col);
+            appendExpBufferChar(&buffer, j == n - 1 ? ')' : ',');
             PQfreemem(col);
         }
     }
-    appendPQExpBuffer(buffer, " from stdin");
+    appendExpBuffer(&buffer, " from stdin");
     if (freeze)
-        appendPQExpBuffer(buffer, " freeze");
+        appendExpBuffer(&buffer, " freeze");
 
     Py_BEGIN_ALLOW_THREADS
-    result = PQexec(self->cnx, buffer->data);
+    result = PQexec(self->cnx, buffer.data);
     Py_END_ALLOW_THREADS
 
     if (!result || PQresultStatus(result) != PGRES_COPY_IN) {
-        destroyPQExpBuffer(buffer);
+        free(buffer.data);
         Py_DECREF(iter_row);
         PyErr_SetString(PyExc_ValueError, PQerrorMessage(self->cnx));
         return NULL;
@@ -858,7 +900,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
 
         if (!(PyTuple_Check(columns) || PyList_Check(columns))) {
             PQputCopyEnd(self->cnx, "Invalid arguments");
-            destroyPQExpBuffer(buffer);
+            free(buffer.data);
             Py_DECREF(columns);
             Py_DECREF(columns);
             Py_DECREF(iter_row);
@@ -874,7 +916,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
         }
         else if (j != n) {
             PQputCopyEnd(self->cnx, "Invalid arguments");
-            destroyPQExpBuffer(buffer);
+            free(buffer.data);
             Py_DECREF(columns);
             Py_DECREF(iter_row);
             PyErr_SetString(
@@ -884,17 +926,18 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
         }
 
         /* builds insert line */
+        buffer.len = 0;
 
         for (j = 0; j < n; ++j) {
             if (j)
-                appendPQExpBufferChar(buffer, '\t');
+                appendExpBufferChar(&buffer, '\t');
 
             item = PySequence_Fast_GET_ITEM(columns, j);
 
             /* convert item to string and append to buffer */
             if (item == Py_None) {
-                appendPQExpBufferChar(buffer, '\\');
-                appendPQExpBufferChar(buffer, 'N');
+                appendExpBufferChar(&buffer, '\\');
+                appendExpBufferChar(&buffer, 'N');
             }
             else if (PyBytes_Check(item)) {
                 const char *t = PyBytes_AsString(item);
@@ -902,23 +945,23 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
                 while (*t) {
                     switch (*t) {
                         case '\\':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\\');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\\');
                             break;
                         case '\t':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\t');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\t');
                             break;
                         case '\r':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\r');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\r');
                             break;
                         case '\n':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\n');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\n');
                             break;
                         default:
-                            appendPQExpBufferChar(buffer, *t);
+                            appendExpBufferChar(&buffer, *t);
                     }
                     ++t;
                 }
@@ -927,7 +970,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
                 PyObject *s = get_encoded_string(item, encoding);
                 if (!s) {
                     PQputCopyEnd(self->cnx, "Encoding error");
-                    destroyPQExpBuffer(buffer);
+                    free(buffer.data);
                     Py_DECREF(item);
                     Py_DECREF(columns);
                     Py_DECREF(iter_row);
@@ -939,23 +982,23 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
                     while (*t) {
                         switch (*t) {
                             case '\\':
-                                appendPQExpBufferChar(buffer, '\\');
-                                appendPQExpBufferChar(buffer, '\\');
+                                appendExpBufferChar(&buffer, '\\');
+                                appendExpBufferChar(&buffer, '\\');
                                 break;
                             case '\t':
-                                appendPQExpBufferChar(buffer, '\\');
-                                appendPQExpBufferChar(buffer, '\t');
+                                appendExpBufferChar(&buffer, '\\');
+                                appendExpBufferChar(&buffer, '\t');
                                 break;
                             case '\r':
-                                appendPQExpBufferChar(buffer, '\\');
-                                appendPQExpBufferChar(buffer, '\r');
+                                appendExpBufferChar(&buffer, '\\');
+                                appendExpBufferChar(&buffer, '\r');
                                 break;
                             case '\n':
-                                appendPQExpBufferChar(buffer, '\\');
-                                appendPQExpBufferChar(buffer, '\n');
+                                appendExpBufferChar(&buffer, '\\');
+                                appendExpBufferChar(&buffer, '\n');
                                 break;
                             default:
-                                appendPQExpBufferChar(buffer, *t);
+                                appendExpBufferChar(&buffer, *t);
                         }
                         ++t;
                     }
@@ -964,11 +1007,9 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
             }
             else if (PyLong_Check(item)) {
                 PyObject *s = PyObject_Str(item);
-                const char *t = PyUnicode_AsUTF8(s);
+                const char *t = PyUnicode_AsUTF8(s); // TODO: free?
 
-                while (*t) {
-                    appendPQExpBufferChar(buffer, *t++);
-                }
+                appendExpBuffer(&buffer, t);
                 Py_DECREF(s);
             }
             else {
@@ -978,23 +1019,23 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
                 while (*t) {
                     switch (*t) {
                         case '\\':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\\');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\\');
                             break;
                         case '\t':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\t');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\t');
                             break;
                         case '\r':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\r');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\r');
                             break;
                         case '\n':
-                            appendPQExpBufferChar(buffer, '\\');
-                            appendPQExpBufferChar(buffer, '\n');
+                            appendExpBufferChar(&buffer, '\\');
+                            appendExpBufferChar(&buffer, '\n');
                             break;
                         default:
-                            appendPQExpBufferChar(buffer, *t);
+                            appendExpBufferChar(&buffer, *t);
                     }
                     ++t;
                 }
@@ -1004,14 +1045,16 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
 
         Py_DECREF(columns);
 
+        appendExpBufferChar(&buffer, '\n');
+
         /* sends data */
-        ret = PQputCopyData(self->cnx, buffer->data, (int)buffer->len);
+        ret = PQputCopyData(self->cnx, buffer.data, (int)buffer.len);
         if (ret != 1) {
             char *errormsg = ret == -1 ? PQerrorMessage(self->cnx)
                                        : "Data cannot be queued";
             PyErr_SetString(PyExc_IOError, errormsg);
             PQputCopyEnd(self->cnx, errormsg);
-            PyMem_Free(buffer);
+            free(buffer.data);
             Py_DECREF(iter_row);
             return NULL;
         }
@@ -1019,7 +1062,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
 
     Py_DECREF(iter_row);
     if (PyErr_Occurred()) {
-        PyMem_Free(buffer);
+        free(buffer.data);
         return NULL; /* pass the iteration error */
     }
 
@@ -1027,11 +1070,11 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
     if (ret != 1) {
         PyErr_SetString(PyExc_IOError, ret == -1 ? PQerrorMessage(self->cnx)
                                                  : "Data cannot be queued");
-        PyMem_Free(buffer);
+        free(buffer.data);
         return NULL;
     }
 
-    PyMem_Free(buffer);
+    free(buffer.data);
 
     Py_BEGIN_ALLOW_THREADS
     result = PQgetResult(self->cnx);

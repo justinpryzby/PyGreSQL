@@ -12,12 +12,6 @@
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include <internal/c.h>
-// #include <internal/port.h>
-#include <internal/pqexpbuffer.h>
-// #include <internal/libpq-int.h>
-// #include <internal/postgres_fe.h>
-
 #include <libpq-fe.h>
 #include <libpq/libpq-fs.h>
 
