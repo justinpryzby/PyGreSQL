@@ -1493,3 +1493,48 @@ notice_receiver(void *arg, const PGresult *res)
     }
     PyGILState_Release(gstate);
 }
+
+// Unlike libpq, this doesn't take a format string.
+static void
+appendExpBuffer(struct ExpBuffer *buf, const char *str)
+{
+    size_t len = strlen(str);
+    size_t need = buf->len + len + 2;
+    void *tmp;
+
+    if (need >= buf->max_len) {
+        // Allocate powers of two unless it's large
+        if (2 * buf->max_len >= need && buf->max_len < 1024 * 1024)
+            need = 2 * buf->max_len;
+
+        tmp = realloc(buf->data, need);
+        if (!tmp) {
+            free(buf->data);
+            buf->error = 1;
+            buf->len = 0;
+            buf->data = NULL;
+            return;
+        }
+
+        buf->data = tmp;
+        buf->max_len = need;
+    }
+
+    tmp = stpcpy(buf->data + buf->len, str);
+    assert(tmp <= buf->data + buf->max_len);
+    buf->len += len;
+}
+
+static void
+appendExpBufferChar(struct ExpBuffer *buf, char c)
+{
+    if (buf->len > buf->max_len - 2) {
+        // slow path dealing with reallocation
+        char tmp[] = {c, 0};
+        return appendExpBuffer(buf, tmp);
+    }
+
+    buf->data[buf->len] = c;
+    buf->len++;
+    buf->data[buf->len] = '\0';
+}
