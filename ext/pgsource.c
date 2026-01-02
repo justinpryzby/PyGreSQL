@@ -8,6 +8,14 @@
  * Please see the LICENSE.TXT file for specific restrictions.
  */
 
+#include "pygres.h"
+
+/* Flags for move methods */
+#define QUERY_MOVEFIRST 1
+#define QUERY_MOVELAST 2
+#define QUERY_MOVENEXT 3
+#define QUERY_MOVEPREV 4
+
 /* Deallocate source object. */
 static void
 source_dealloc(sourceObject *self)
@@ -796,7 +804,7 @@ static PyMethodDef source_methods[] = {
 static char source__doc__[] = "PyGreSQL source object";
 
 /* Source type definition */
-static PyTypeObject sourceType = {
+PyTypeObject sourceType = {
     PyVarObject_HEAD_INIT(NULL, 0) "pgdb.Source", /* tp_name */
     sizeof(sourceObject),                         /* tp_basicsize */
     0,                                            /* tp_itemsize */
