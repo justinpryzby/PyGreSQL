@@ -639,6 +639,7 @@ static PyObject *
 conn_endcopy(connObject *self, PyObject *noargs)
 {
     int ret;
+    PGresult *result;
 
     if (!self->cnx) {
         PyErr_SetString(PyExc_TypeError, "Connection is not valid");
@@ -654,8 +655,21 @@ conn_endcopy(connObject *self, PyObject *noargs)
                                     " wait for write-ready and try again");
         return NULL;
     }
-    Py_INCREF(Py_None);
-    return Py_None;
+
+    Py_BEGIN_ALLOW_THREADS
+    result = PQgetResult(self->cnx);
+    Py_END_ALLOW_THREADS
+    if (PQresultStatus(result) != PGRES_COMMAND_OK) {
+        PyErr_SetString(PyExc_ValueError, PQerrorMessage(self->cnx));
+        PQclear(result);
+        return NULL;
+    } else {
+        char *tuplestr = PQcmdTuples(result);
+        PQclear(result);
+        if (tuplestr[0])
+            return PyLong_FromLong(atol(tuplestr));
+        return NULL;
+    }
 }
 
 /* Direct access function: set blocking status. */
@@ -710,6 +724,7 @@ conn_is_non_blocking(connObject *self, PyObject *noargs)
     return PyBool_FromLong((long)rc);
 }
 
+#if 0
 /* Insert table */
 static char conn_inserttable__doc__[] =
     "inserttable(table, data, [columns]) -- insert iterable into table\n\n"
@@ -1072,6 +1087,7 @@ conn_inserttable(connObject *self, PyObject *args, PyObject *kwds)
         return PyLong_FromLong(ntuples);
     }
 }
+#endif
 
 /* Get transaction state. */
 static char conn_transaction__doc__[] =

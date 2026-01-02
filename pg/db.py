@@ -249,41 +249,55 @@ class DB:
         """Encode a JSON string for use within SQL."""
         return jsonencode(d)
 
-    def inserttable(self, table, rows, columns=None):
+    def inserttable(self, table: str, rows, columns=None, **kw: Any): # XXX
         # PQescapeIdentifier
-        if not isinstance(rows, (list,tuple)):
-            raise TypeError('expects a list or a tuple as second argument')
+        try:
+            iter(rows)
+        except:
+            raise TypeError('expects an iterable as second argument')
 
-        sql = 'copy %s' % self.escape_identifier(table)
+        if columns and not isinstance(columns, (list,tuple)):
+            raise TypeError('expects a tuple or a list as third argument')
+
+        sql = 'copy %s' % '.'.join([self.escape_identifier(i) for i in table.split('.')])
+
         if columns == []:
             return
         if columns is not None:
             sql += '( %s )' % ', '.join([self.escape_identifier(i) for i in columns])
         sql += ' from stdin'
+        if kw.get('freeze'):
+            sql += ' FREEZE'
         self.query(sql)
         try:
             self._inserttable_guts(rows)
         except Exception as e:
             raise
         finally:
-            self.endcopy()
+            ret = self.endcopy()
+        return ret
 
     def _inserttable_guts(self, rows):
         import re
         bytesreg = re.compile(b'([\\\t\n])')
         strreg = re.compile('([\\\t\n])')
+        firstlen = -1
         for row in rows:
             if not isinstance(row, (list,tuple)):
-                raise TypeError('second argument must contain a tuple or a list')
+                raise TypeError('second argument must contain tuples or lists')
+            if firstlen == -1:
+                firstlen = len(row)
+            if firstlen != len(row):
+                raise TypeError('The second arg must contain sequences of the same size')
 
             toput = []
             for col in row:
                 if col is None:
                     toput.append('\\N')
                 elif isinstance(col, bytes):
-                    toput.append(re.sub(bytesreg, br'\\\g<1>', col).decode())
-                elif isinstance(col, (str,unicode)):
-                    toput.append(re.sub(strreg, r'\\\g<1>', col))
+                    toput.append(bytesreg.sub(br'\\\g<1>', col).decode())
+                elif isinstance(col, str):
+                    toput.append(strreg.sub(r'\\\g<1>', col))
                 #elif isinstance(col, (int,long)):
                     #toput.append(str(col))
                 else:
@@ -1445,7 +1459,7 @@ class DB:
         """Get the last notify from the server."""
         return self._valid_db.getnotify()
 
-    def inserttable(self, table: str, values: Sequence[list|tuple],
+    def _inserttable(self, table: str, values: Sequence[list|tuple],
                     columns: list[str] | tuple[str, ...] | None = None,
                     freeze: bool=False) -> int:
         """Insert a Python iterable into a database table."""
@@ -1499,9 +1513,9 @@ class DB:
         """Get a line from server socket."""
         return self._valid_db.getline()
 
-    def endcopy(self) -> None:
+    def endcopy(self) -> int:
         """Synchronize client and server."""
-        self._valid_db.endcopy()
+        return self._valid_db.endcopy()
 
     def set_non_blocking(self, nb: bool) -> None:
         """Set the non-blocking mode of the connection."""

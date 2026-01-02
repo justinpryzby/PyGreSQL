@@ -136,7 +136,7 @@ class TestConnectObject(unittest.TestCase):
             'endcopy', 'escape_bytea', 'escape_identifier',
             'escape_literal', 'escape_string', 'fileno', 'get_cast_hook',
             'get_notice_receiver', 'getline', 'getlo', 'getnotify',
-            'inserttable', 'is_non_blocking', 'locreate', 'loimport',
+            'is_non_blocking', 'locreate', 'loimport',
             'parameter', 'poll', 'prepare', 'putline',
             'query', 'query_prepared', 'reset', 'send_query',
             'set_cast_hook', 'set_non_blocking', 'set_notice_receiver',
@@ -1924,7 +1924,7 @@ class TestInserttable(unittest.TestCase):
         # (this would pass otherwise since there is a column named i4)
         try:
             self.c.inserttable('test (i4)', data)
-        except ValueError as e:
+        except pg.ProgrammingError as e:
             self.assertIn('relation "test (i4)" does not exist', str(e))
         else:
             self.assertFalse('expected an error')
@@ -1945,7 +1945,7 @@ class TestInserttable(unittest.TestCase):
         # (this would pass otherwise since there are columns i2 and i4)
         try:
             self.c.inserttable('test', data, ['i2,i4'])
-        except ValueError as e:
+        except pg.ProgrammingError as e:
             self.assertIn(
                 'column "i2,i4" of relation "test" does not exist', str(e))
         else:
@@ -1968,10 +1968,10 @@ class TestInserttable(unittest.TestCase):
         # try inserting data with a huge list of column names
         cols = ['very_long_column_name'] * 2000
         # Should raise a value error because the column does not exist
-        self.assertRaises(ValueError, self.c.inserttable, 'test', data, cols)
-        # double the size, should not overflow buffer nor raise memory error
+        self.assertRaises(pg.ProgrammingError, self.c.inserttable, 'test', data, cols)
+        # double the size, should still not overflow buffer nor raise memory error
         cols *= 2
-        self.assertRaises(ValueError, self.c.inserttable, 'test', data, cols)
+        self.assertRaises(pg.ProgrammingError, self.c.inserttable, 'test', data, cols)
 
     def test_inserttable_with_out_of_range_data(self):
         # try inserting data out of range for the column type
@@ -2125,6 +2125,7 @@ class TestInserttable(unittest.TestCase):
 
     def test_insert_table_with_freeze_true_without_truncate(self):
         try:
+            self.c.inserttable('test', self.data)
             self.c.inserttable('test', self.data, freeze=True)
         except ValueError as e:
             self.assertIn('cannot perform COPY FREEZE', str(e))

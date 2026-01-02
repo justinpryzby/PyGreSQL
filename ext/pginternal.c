@@ -1494,6 +1494,7 @@ notice_receiver(void *arg, const PGresult *res)
     PyGILState_Release(gstate);
 }
 
+#if 0
 /* Extend char buffer with given string */
 static void
 ext_char_buffer_s(struct CharBuffer *buf, const char *s)
@@ -1541,3 +1542,4 @@ ext_char_buffer_c(struct CharBuffer *buf, char c)
         buf->data[buf->len] = '\0';
     }
 }
+#endif
