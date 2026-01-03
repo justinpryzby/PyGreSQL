@@ -1735,7 +1735,7 @@ class TestInserttable(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(self.cls_set_up)
-        self.c = pg.DB(dbname, dbhost, dbport)
+        self.c = pg.DB(connect())
         self.c.query("set client_encoding=utf8")
         self.c.query("set datestyle='ISO,YMD'")
         self.c.query("set lc_monetary='C'")
@@ -2148,7 +2148,7 @@ class TestDirectSocketAccess(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        c = pg.DB(dbname, dbhost, dbport)
+        c = connect()
         c.query("drop table if exists test cascade")
         c.query("create table test (i int, v varchar(16))")
         c.close()
@@ -2162,8 +2162,7 @@ class TestDirectSocketAccess(unittest.TestCase):
 
     def setUp(self):
         self.assertTrue(self.cls_set_up)
-        #self.c = connect()
-        self.c = pg.DB(dbname, dbhost, dbport)
+        self.c = pg.DB(connect())
         self.c.query("set client_encoding=utf8")
 
     def tearDown(self):
