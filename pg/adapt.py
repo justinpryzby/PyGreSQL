@@ -90,7 +90,7 @@ class _SimpleTypes(dict):
 
     _type_aliases: Mapping[str, list[str | type]] = MappingProxyType({
         'bool': [bool],
-        'bytea': [Bytea],
+        'bytea': [Bytea, bytes],
         'date': ['interval', 'time', 'timetz', 'timestamp', 'timestamptz',
                  'abstime', 'reltime',  # these are very old
                  'datetime', 'timedelta',  # these do not really exist
@@ -99,7 +99,7 @@ class _SimpleTypes(dict):
         'int': ['cid', 'int2', 'int4', 'int8', 'oid', 'xid', int],
         'hstore': [Hstore], 'json': ['jsonb', Json], 'uuid': [UUID],
         'num': ['numeric', Decimal], 'money': [],
-        'text': ['bpchar', 'char', 'name', 'varchar', bytes, str]
+        'text': ['bpchar', 'char', 'name', 'varchar', str]
     })
 
     # noinspection PyMissingConstructor
